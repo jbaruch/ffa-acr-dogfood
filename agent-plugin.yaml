@@ -1,9 +1,10 @@
 schemaVersion: 1
 name: jbaruch/ffa-acr-dogfood
-version: 0.9.38
+version: 0.9.39
 description: Write professional, persuasive complaint letters to US airlines emphasizing loyalty status, DOT regulations, and airline commitments.
 source:
   repository: https://github.com/jbaruch/ffa-acr-dogfood
+  tesslIdentity: jbaruch/frequent-flyer-advocate
 artifacts:
   rules:
     - id: boundaries

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.39 — 2026-09-05
+
+### Fixed
+
+- Record the original Tessl identity, `jbaruch/frequent-flyer-advocate`, in the ACR manifest so owned helper references resolve when installed as `jbaruch/ffa-acr-dogfood`. Preserve the package contents and SessionStart hook. This version requires the corrected ACR CLI to be released and installed before publication.
+
 ## 0.9.38 — 2026-08-10
 
 ### Changed
