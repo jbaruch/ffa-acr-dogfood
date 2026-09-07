@@ -1,5 +1,9 @@
 # jbaruch/ffa-acr-dogfood
 
+[![Tessl score of the upstream package jbaruch/frequent-flyer-advocate](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2Fjbaruch%2Ffrequent-flyer-advocate)](https://tessl.io/registry/jbaruch/frequent-flyer-advocate)
+
+The badge is the upstream Tessl package's score, not this copy's. This ACR copy is not published to Tessl and has no score of its own.
+
 Write professional, persuasive complaint letters to US airlines on behalf of passengers — grounded in the airline's own published policies, federal DOT regulations, and the passenger's loyalty status, not generic grievances.
 
 ## Installation
