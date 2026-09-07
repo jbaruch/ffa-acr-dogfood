@@ -17,7 +17,7 @@ acr realize
 acr check
 ```
 
-Tessl is optional. The SessionStart hook skips its update with a notice when Tessl is absent. When present, it runs `tessl update --yes` in the project directory and reports any failure.
+Tessl is optional. The SessionStart hook skips its update with a notice when Tessl is absent. When present, it runs `tessl update --yes` in the project directory and reports any failure, keeping the update's own exit status. Every outcome worth relaying — the skip, a failure, and a successful update that printed something — reaches the agent as a session-start context payload beginning `Session-start status — `, as well as the terminal.
 
 This copy is not published to Tessl. Repository Actions, including the inherited Tessl publication workflow, are disabled. Manual ACR publication does not require the inherited workflow secrets listed in `.env.example`.
 

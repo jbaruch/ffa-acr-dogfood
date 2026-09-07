@@ -1,18 +1,79 @@
 #!/usr/bin/env bash
+# SessionStart hook: run the optional Tessl update, then report the outcome to
+# the agent as well as to the terminal.
+#
+# Contract:
+#   stdin : the native SessionStart payload — not read.
+#   stdout: nothing, or exactly one JSON object carrying a session-start context
+#           payload whose text begins with "Session-start status — "
+#           (hook-action-reporting, Surface the Status). Claude Code and Codex
+#           read {"hookSpecificOutput":{"hookEventName":"SessionStart",
+#           "additionalContext":"..."}}; Cursor, which the ACR realization
+#           selects through CURSOR_VERSION, reads {"additional_context":"..."}.
+#   stderr: the human-facing notice or diagnostic.
+#   exit  : 0 when Tessl is absent or the update succeeds, the update's own
+#           non-zero status when it fails.
+#
+# A skipped or failed update is a status the agent must relay, so both emit the
+# payload. A successful update emits one only when Tessl actually said
+# something: `tessl update` writes to this hook's stdout, and an uncaptured
+# child write would sit beside the envelope and leave it unparseable, so its
+# output is captured and carried inside the payload instead.
 set -euo pipefail
 
+# Encode a status message as the body of a JSON string, in Bash alone — a jq or
+# interpreter dependency here would be one more thing that can be missing at
+# session start. The five named escapes plus quote and backslash cover what the
+# message can contain; any control byte still left (a terminal escape sequence
+# in Tessl's output) is dropped, because a JSON string cannot carry one
+# literally. Nothing is lost by that drop: a failing update's raw output reaches
+# the terminal on stderr as well.
+json_escape() { # <message>
+  local encoded="$1"
+  encoded="${encoded//\\/\\\\}"
+  encoded="${encoded//\"/\\\"}"
+  encoded="${encoded//$'\b'/\\b}"
+  encoded="${encoded//$'\f'/\\f}"
+  encoded="${encoded//$'\n'/\\n}"
+  encoded="${encoded//$'\r'/\\r}"
+  encoded="${encoded//$'\t'/\\t}"
+  printf '%s' "${encoded//[[:cntrl:]]/}"
+}
+
+emit_status() { # <message>
+  local encoded
+  encoded="$(json_escape "$1")"
+  if [[ -n "${CURSOR_VERSION:-}" ]]; then
+    printf '{"additional_context":"%s"}\n' "$encoded"
+    return 0
+  fi
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$encoded"
+}
+
 main() {
-  local status
+  local output="" status=0 message=""
+
   if ! command -v tessl >/dev/null 2>&1; then
-    printf '%s\n' 'Tessl update skipped: optional Tessl CLI not found on PATH. Install Tessl and add it to PATH to enable updates.' >&2
+    message='Tessl update skipped: optional Tessl CLI not found on PATH. Install Tessl and add it to PATH to enable updates.'
+    printf '%s\n' "$message" >&2
+    emit_status "Session-start status — ${message}"
     return 0
   fi
 
-  if tessl update --yes; then
+  if output="$(tessl update --yes)"; then
+    if [[ -n "$output" ]]; then
+      emit_status "Session-start status — Tessl update completed."$'\n'"$output"
+    fi
     return 0
   else
     status=$?
+    message="Tessl update failed (exit ${status})."
+    if [[ -n "$output" ]]; then
+      printf '%s\n' "$output" >&2
+      message+=$'\n'"$output"
+    fi
     printf 'Tessl update failed (exit %s). Resolve the error above and rerun "tessl update --yes" in this project.\n' "$status" >&2
+    emit_status "Session-start status — ${message}"$'\n'"Resolve the error and rerun \`tessl update --yes\` in this project."
     return "$status"
   fi
 }

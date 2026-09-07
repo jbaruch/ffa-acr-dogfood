@@ -5,6 +5,7 @@
 ### Fixed
 
 - Skip the optional SessionStart Tessl update with an actionable notice when Tessl is absent; preserve update failures when it is present. Cover both paths and safe sourcing in the package gate.
+- Report that SessionStart outcome to the agent, not just to the terminal: the skip, a failure, and a successful update that printed something each emit a `Session-start status — ` context payload in the shape the running agent reads, while a failure keeps its own exit status.
 - Correct this copy's README installation route and repository-settings link for ACR distribution.
 
 - Record the original Tessl identity, `jbaruch/frequent-flyer-advocate`, in the ACR manifest so owned helper references resolve when installed as `jbaruch/ffa-acr-dogfood`. Preserve the package contents and SessionStart hook. This version requires the corrected ACR CLI to be released and installed before publication.
