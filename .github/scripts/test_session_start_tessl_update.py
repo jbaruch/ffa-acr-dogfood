@@ -63,13 +63,22 @@ class SessionStartTesslUpdateTests(unittest.TestCase):
     def hooks(self) -> list[tuple[str, Path]]:
         return [("source", HOOK), ("materialized", self.materialized)]
 
-    def stub_tessl(self, status: int, out: str = "stub update output\n") -> None:
+    def envelopes(self) -> list[tuple[str, dict[str, str], bool]]:
+        """The two shapes a realization selects between, and how to read each."""
+        return [("native", {}, False), ("cursor", {"CURSOR_VERSION": "1.2.3"}, True)]
+
+    def stub_tessl(
+        self,
+        status: int,
+        out: str = "stub update output\n",
+        err: str = "stub update diagnostic\n",
+    ) -> None:
         stub = self.bin / "tessl"
         stub.write_text(
             "#!/bin/bash\nset -euo pipefail\n"
             'printf "%s\\n" "$PWD" "$#" "$@" >> "$HOOK_TEST_LOG"\n'
             f"printf '%s' {ansi_c_quote(out)}\n"
-            'printf "stub update diagnostic\\n" >&2\n'
+            f"printf '%s' {ansi_c_quote(err)} >&2\n"
             f"exit {status}\n"
         )
         stub.chmod(0o755)
@@ -164,34 +173,105 @@ class SessionStartTesslUpdateTests(unittest.TestCase):
         a SessionStart hook's stdout only on exit 0 would otherwise drop this
         payload and record a bare "hook exited with code N" in its place — the
         failure would reach the terminal and never reach the agent.
+
+        Both of the update's streams travel inside the payload, each named, and
+        both stay on the terminal. The stub writes different text to each, so
+        an assertion cannot pass by finding the other one.
         """
         for status in (2, 41, 255):
             self.stub_tessl(status)
             for label, hook in self.hooks():
-                with self.subTest(hook=label, tessl_status=status):
+                for shape, env, cursor in self.envelopes():
+                    with self.subTest(hook=label, envelope=shape, tessl_status=status):
+                        self.reset_log()
+                        result = self.run_hook(hook, **env)
+                        self.assertEqual(result.returncode, 0)
+                        self.assertEqual(
+                            result.stderr.splitlines(),
+                            [
+                                "stub update diagnostic",
+                                "stub update output",
+                                f'Tessl update failed (exit {status}). Resolve the error'
+                                ' above and rerun "tessl update --yes" in this project.',
+                            ],
+                        )
+                        payload = self.decode_payload(result.stdout, cursor=cursor)
+                        self.assertEqual(
+                            payload,
+                            MARKER + f"Tessl update failed (exit {status}).\n"
+                            "Update stdout:\nstub update output\n"
+                            "Update stderr:\nstub update diagnostic\n"
+                            "Resolve the error and rerun "
+                            "`tessl update --yes` in this project.",
+                        )
+                        # A known failure never reads to the agent as anything else.
+                        self.assertNotIn("completed", payload)
+                        self.assertNotIn("skipped", payload)
+                        self.assert_invocation()
+
+    def test_a_failure_diagnosed_only_on_stderr_reaches_the_agent(self) -> None:
+        """Tessl diagnoses some failures on stderr and prints no stdout at all.
+
+        Capturing stdout alone left that payload carrying an exit code and a
+        retry command with no error in it — everything the agent needed to act
+        on stayed on the terminal.
+        """
+        diagnostic = "registry unavailable: refresh the token and retry"
+        self.stub_tessl(41, out="", err=diagnostic + "\n")
+        for label, hook in self.hooks():
+            for shape, env, cursor in self.envelopes():
+                with self.subTest(hook=label, envelope=shape):
                     self.reset_log()
-                    result = self.run_hook(hook)
+                    result = self.run_hook(hook, **env)
                     self.assertEqual(result.returncode, 0)
                     self.assertEqual(
                         result.stderr.splitlines(),
                         [
-                            "stub update diagnostic",
-                            "stub update output",
-                            f'Tessl update failed (exit {status}). Resolve the error'
-                            ' above and rerun "tessl update --yes" in this project.',
+                            diagnostic,
+                            'Tessl update failed (exit 41). Resolve the error above'
+                            ' and rerun "tessl update --yes" in this project.',
                         ],
                     )
-                    payload = self.decode_payload(result.stdout)
+                    payload = self.decode_payload(result.stdout, cursor=cursor)
                     self.assertEqual(
                         payload,
-                        MARKER + f"Tessl update failed (exit {status}).\n"
-                        "stub update output\nResolve the error and rerun "
+                        MARKER + "Tessl update failed (exit 41).\n"
+                        f"Update stderr:\n{diagnostic}\n"
+                        "Resolve the error and rerun "
                         "`tessl update --yes` in this project.",
                     )
-                    # A known failure never reads to the agent as anything else.
-                    self.assertNotIn("completed", payload)
-                    self.assertNotIn("skipped", payload)
+                    # The update printed nothing on stdout, so no section of the
+                    # payload claims it did.
+                    self.assertNotIn("Update stdout", payload)
                     self.assert_invocation()
+
+    def test_noise_on_either_failing_stream_keeps_the_envelope_parseable(self) -> None:
+        out = 'out says "hi"\tafter\n'
+        err = 'err \x1b[31mred\x1b[0m\\ path "quoted"\n'
+        self.stub_tessl(2, out=out, err=err)
+        for label, hook in self.hooks():
+            with self.subTest(hook=label):
+                self.reset_log()
+                result = self.run_hook(hook)
+                self.assertEqual(result.returncode, 0)
+                # The terminal gets both streams as the update wrote them.
+                self.assertEqual(
+                    result.stderr,
+                    err + out + 'Tessl update failed (exit 2). Resolve the error'
+                    ' above and rerun "tessl update --yes" in this project.\n',
+                )
+                payload = self.decode_payload(result.stdout)
+                # Quotes, backslashes and tabs survive as themselves in both
+                # sections; the terminal escapes are gone from both.
+                self.assertEqual(
+                    payload,
+                    MARKER + "Tessl update failed (exit 2).\n"
+                    'Update stdout:\nout says "hi"\tafter\n'
+                    'Update stderr:\nerr [31mred[0m\\ path "quoted"\n'
+                    "Resolve the error and rerun "
+                    "`tessl update --yes` in this project.",
+                )
+                self.assert_invocation()
 
     def test_an_undeliverable_failure_report_is_not_reported_as_success(self) -> None:
         self.stub_tessl(41)

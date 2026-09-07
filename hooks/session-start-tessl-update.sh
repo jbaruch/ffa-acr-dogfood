@@ -10,18 +10,25 @@
 #           read {"hookSpecificOutput":{"hookEventName":"SessionStart",
 #           "additionalContext":"..."}}; Cursor, which the ACR realization
 #           selects through CURSOR_VERSION, reads {"additional_context":"..."}.
-#   stderr: the human-facing notice or diagnostic.
+#   stderr: the human-facing notice or diagnostic, and whatever the update
+#           itself wrote there.
 #   exit  : 0 once the outcome has been reported. The optional update is
 #           best-effort at this boundary, so a failed update does not fail the
-#           hook — its exact exit status, its output and the recovery step go
-#           into the payload and onto stderr instead. A non-zero exit means the
-#           report itself could not be written.
+#           hook — its exact exit status, both of its streams and the recovery
+#           step go into the payload and onto stderr instead. A non-zero exit
+#           means the report itself could not be written.
 #
 # A skipped or failed update is a status the agent must relay, so both emit the
 # payload. A successful update emits one only when Tessl actually said
 # something: `tessl update` writes to this hook's stdout, and an uncaptured
 # child write would sit beside the envelope and leave it unparseable, so its
 # output is captured and carried inside the payload instead.
+#
+# Both of the update's streams are captured, separately. A failing `tessl
+# update` reports its cause on stderr, so a report carrying stdout alone hands
+# the agent an exit code and a retry command with no diagnostic to act on — the
+# one thing it needs to resolve the failure. Captured stderr is written back out
+# to the terminal, where it would have appeared had it never been captured.
 #
 # The exit status reports the delivery, not the update. Codex 0.153.2 parses
 # SessionStart stdout only on exit 0: `parse_completed` in
@@ -61,8 +68,39 @@ emit_status() { # <message>
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$encoded"
 }
 
+# Run the update once and bring back all three of its results — the caller's
+# update_stdout, update_status and update_stderr. One command substitution
+# returns one stream, so the update runs inside a process substitution that
+# writes the three values back as NUL-terminated fields: NUL is the one byte
+# neither captured stream can contain, so nothing the update prints can be
+# mistaken for a field boundary, and `read` splits on it with no external
+# command. Returns non-zero if a field did not come back.
+run_update() {
+  {
+    IFS= read -r -d '' update_stdout &&
+    IFS= read -r -d '' update_status &&
+    IFS= read -r -d '' update_stderr
+  } < <(
+    exec 3>&1
+    child_stderr="$(
+      {
+        # Inside here fd 1 is this capture, so update stderr lands in
+        # child_stderr while update stdout goes to its own substitution. fd 3
+        # is the pipe back to the reader, and is closed for the update itself.
+        if child_stdout="$(tessl update --yes 3>&-)"; then
+          child_status=0
+        else
+          child_status=$?
+        fi
+        printf '%s\0%s\0' "$child_stdout" "$child_status" >&3
+      } 2>&1
+    )"
+    printf '%s\0' "$child_stderr" >&3
+  )
+}
+
 main() {
-  local output="" status=0 message=""
+  local update_stdout="" update_status="" update_stderr="" message=""
 
   if ! command -v tessl >/dev/null 2>&1; then
     message='Tessl update skipped: optional Tessl CLI not found on PATH. Install Tessl and add it to PATH to enable updates.'
@@ -71,25 +109,38 @@ main() {
     return 0
   fi
 
-  if output="$(tessl update --yes)"; then
-    if [[ -n "$output" ]]; then
-      emit_status "Session-start status — Tessl update completed."$'\n'"$output"
-    fi
-    return 0
-  else
-    status=$?
-    message="Tessl update failed (exit ${status})."
-    if [[ -n "$output" ]]; then
-      printf '%s\n' "$output" >&2
-      message+=$'\n'"$output"
-    fi
-    printf 'Tessl update failed (exit %s). Resolve the error above and rerun "tessl update --yes" in this project.\n' "$status" >&2
-    if ! emit_status "Session-start status — ${message}"$'\n'"Resolve the error and rerun \`tessl update --yes\` in this project."; then
-      printf 'Session-start hook could not report the Tessl update failure (exit %s) to the agent. Read the error above and rerun "tessl update --yes" in this project.\n' "$status" >&2
-      return 1
+  if ! run_update; then
+    printf 'Session-start hook could not read the result of "tessl update --yes". Rerun it in this project.\n' >&2
+    return 1
+  fi
+
+  # The update's own stderr was captured so the agent can see it; it belongs on
+  # the terminal too, ahead of anything this hook has to say about it.
+  if [[ -n "$update_stderr" ]]; then
+    printf '%s\n' "$update_stderr" >&2
+  fi
+
+  if [[ "$update_status" == 0 ]]; then
+    if [[ -n "$update_stdout" ]]; then
+      emit_status "Session-start status — Tessl update completed."$'\n'"$update_stdout"
     fi
     return 0
   fi
+
+  message="Tessl update failed (exit ${update_status})."
+  if [[ -n "$update_stdout" ]]; then
+    printf '%s\n' "$update_stdout" >&2
+    message+=$'\n'"Update stdout:"$'\n'"$update_stdout"
+  fi
+  if [[ -n "$update_stderr" ]]; then
+    message+=$'\n'"Update stderr:"$'\n'"$update_stderr"
+  fi
+  printf 'Tessl update failed (exit %s). Resolve the error above and rerun "tessl update --yes" in this project.\n' "$update_status" >&2
+  if ! emit_status "Session-start status — ${message}"$'\n'"Resolve the error and rerun \`tessl update --yes\` in this project."; then
+    printf 'Session-start hook could not report the Tessl update failure (exit %s) to the agent. Read the error above and rerun "tessl update --yes" in this project.\n' "$update_status" >&2
+    return 1
+  fi
+  return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
