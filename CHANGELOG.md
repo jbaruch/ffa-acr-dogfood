@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Skip the optional SessionStart Tessl update with an actionable notice when Tessl is absent; preserve update failures when it is present. Cover both paths and safe sourcing in the package gate.
+- Correct this copy's README installation route and repository-settings link for ACR distribution.
+
 - Record the original Tessl identity, `jbaruch/frequent-flyer-advocate`, in the ACR manifest so owned helper references resolve when installed as `jbaruch/ffa-acr-dogfood`. Preserve the package contents and SessionStart hook. This version requires the corrected ACR CLI to be released and installed before publication.
 
 ## 0.9.38 — 2026-08-10
