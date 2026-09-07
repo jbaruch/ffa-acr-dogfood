@@ -23,9 +23,12 @@ import unittest
 HOOK = Path(__file__).resolve().parents[2] / "hooks/session-start-tessl-update.sh"
 BASH = Path("/bin/bash")
 MARKER = "Session-start status — "
-# What ACR writes into a Claude Code or Codex realization, mirrored here so the
-# materialized copy under test sits at a realistic path.
-MATERIALIZED = ".claude/hooks/acr__jbaruch__ffa-acr-dogfood__session-start-tessl-update"
+# Where an ACR realization writes this hook for Claude Code, mirrored here so the
+# materialized copy under test sits at the path an agent actually runs.
+MATERIALIZED = (
+    ".claude/hooks/acr__jbaruch__ffa-acr-dogfood__session-start-tessl-update"
+    "/session-start-tessl-update.sh"
+)
 
 
 def ansi_c_quote(text: str) -> str:
