@@ -11,14 +11,25 @@
 #           "additionalContext":"..."}}; Cursor, which the ACR realization
 #           selects through CURSOR_VERSION, reads {"additional_context":"..."}.
 #   stderr: the human-facing notice or diagnostic.
-#   exit  : 0 when Tessl is absent or the update succeeds, the update's own
-#           non-zero status when it fails.
+#   exit  : 0 once the outcome has been reported. The optional update is
+#           best-effort at this boundary, so a failed update does not fail the
+#           hook — its exact exit status, its output and the recovery step go
+#           into the payload and onto stderr instead. A non-zero exit means the
+#           report itself could not be written.
 #
 # A skipped or failed update is a status the agent must relay, so both emit the
 # payload. A successful update emits one only when Tessl actually said
 # something: `tessl update` writes to this hook's stdout, and an uncaptured
 # child write would sit beside the envelope and leave it unparseable, so its
 # output is captured and carried inside the payload instead.
+#
+# The exit status reports the delivery, not the update. Codex 0.153.2 parses
+# SessionStart stdout only on exit 0: `parse_completed` in
+# codex-rs/hooks/src/events/session_start.rs at rust-v0.153.2 records any other
+# status as "hook exited with code N" and appends no model context, and Cursor
+# fails open on a non-zero exit the same way. Returning the update's own status
+# would hide the one failure this hook exists to report, so that status travels
+# inside the report and the process reports whether the report got out.
 set -euo pipefail
 
 # Encode a status message as the body of a JSON string, in Bash alone — a jq or
@@ -45,7 +56,7 @@ emit_status() { # <message>
   encoded="$(json_escape "$1")"
   if [[ -n "${CURSOR_VERSION:-}" ]]; then
     printf '{"additional_context":"%s"}\n' "$encoded"
-    return 0
+    return
   fi
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$encoded"
 }
@@ -73,8 +84,11 @@ main() {
       message+=$'\n'"$output"
     fi
     printf 'Tessl update failed (exit %s). Resolve the error above and rerun "tessl update --yes" in this project.\n' "$status" >&2
-    emit_status "Session-start status — ${message}"$'\n'"Resolve the error and rerun \`tessl update --yes\` in this project."
-    return "$status"
+    if ! emit_status "Session-start status — ${message}"$'\n'"Resolve the error and rerun \`tessl update --yes\` in this project."; then
+      printf 'Session-start hook could not report the Tessl update failure (exit %s) to the agent. Read the error above and rerun "tessl update --yes" in this project.\n' "$status" >&2
+      return 1
+    fi
+    return 0
   fi
 }
 

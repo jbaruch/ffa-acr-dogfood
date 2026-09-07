@@ -80,6 +80,14 @@ class SessionStartTesslUpdateTests(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
+    def run_hook_unable_to_report(self, hook: Path) -> subprocess.CompletedProcess[str]:
+        """Run the hook with stdout closed, so writing the payload fails."""
+        return subprocess.run(
+            [str(BASH), "-c", 'exec "$1" >&-', "hook-delivery-test", str(hook)],
+            cwd=self.project, env=self.env,
+            capture_output=True, text=True, check=False,
+        )
+
     def reset_log(self) -> None:
         if self.log.exists():
             self.log.unlink()
@@ -149,29 +157,68 @@ class SessionStartTesslUpdateTests(unittest.TestCase):
                 self.assertEqual(result.stderr, "stub update diagnostic\n")
                 self.assert_invocation()
 
-    def test_update_failure_preserves_status_and_reports_recovery(self) -> None:
-        self.stub_tessl(23)
+    def test_update_failure_is_delivered_with_its_own_status_inside(self) -> None:
+        """A failed update reports; the process reports that it reported.
+
+        The exit status the agent sees is the delivery's. A runtime that parses
+        a SessionStart hook's stdout only on exit 0 would otherwise drop this
+        payload and record a bare "hook exited with code N" in its place — the
+        failure would reach the terminal and never reach the agent.
+        """
+        for status in (2, 41, 255):
+            self.stub_tessl(status)
+            for label, hook in self.hooks():
+                with self.subTest(hook=label, tessl_status=status):
+                    self.reset_log()
+                    result = self.run_hook(hook)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(
+                        result.stderr.splitlines(),
+                        [
+                            "stub update diagnostic",
+                            "stub update output",
+                            f'Tessl update failed (exit {status}). Resolve the error'
+                            ' above and rerun "tessl update --yes" in this project.',
+                        ],
+                    )
+                    payload = self.decode_payload(result.stdout)
+                    self.assertEqual(
+                        payload,
+                        MARKER + f"Tessl update failed (exit {status}).\n"
+                        "stub update output\nResolve the error and rerun "
+                        "`tessl update --yes` in this project.",
+                    )
+                    # A known failure never reads to the agent as anything else.
+                    self.assertNotIn("completed", payload)
+                    self.assertNotIn("skipped", payload)
+                    self.assert_invocation()
+
+    def test_an_undeliverable_failure_report_is_not_reported_as_success(self) -> None:
+        self.stub_tessl(41)
         for label, hook in self.hooks():
             with self.subTest(hook=label):
                 self.reset_log()
-                result = self.run_hook(hook)
-                self.assertEqual(result.returncode, 23)
-                self.assertEqual(
-                    result.stderr.splitlines(),
-                    [
-                        "stub update diagnostic",
-                        "stub update output",
-                        'Tessl update failed (exit 23). Resolve the error above'
-                        ' and rerun "tessl update --yes" in this project.',
-                    ],
+                result = self.run_hook_unable_to_report(hook)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                # Bash owns the middle of this stream: it names the unwritable
+                # descriptor, and flushes the payload it could not send onto
+                # stderr with the next redirected write. What the hook owns is
+                # the outcome — a non-zero status, the update's own exit code
+                # and diagnostic, and the delivery notice last.
+                lines = result.stderr.splitlines()
+                self.assertIn("stub update diagnostic", lines)
+                self.assertIn(
+                    'Tessl update failed (exit 41). Resolve the error above'
+                    ' and rerun "tessl update --yes" in this project.',
+                    lines,
                 )
-                payload = self.decode_payload(result.stdout)
                 self.assertEqual(
-                    payload,
-                    MARKER + "Tessl update failed (exit 23).\nstub update output\n"
-                    "Resolve the error and rerun `tessl update --yes` in this project.",
+                    lines[-1],
+                    "Session-start hook could not report the Tessl update"
+                    ' failure (exit 41) to the agent. Read the error above and'
+                    ' rerun "tessl update --yes" in this project.',
                 )
-                self.assertNotIn("skipped", payload)
                 self.assert_invocation()
 
     def test_quotes_newlines_and_control_bytes_keep_the_envelope_parseable(self) -> None:
