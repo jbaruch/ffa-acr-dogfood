@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic gate for jbaruch/frequent-flyer-advocate: diagnostics, then tests.
+# Deterministic gate for jbaruch/ffa-acr-dogfood: diagnostics, then tests.
 #
 # Two callers run this exact script, so pre-merge and pre-publish cannot drift:
 #   - .github/workflows/tests.yml       on every pull request (gates the merge)
@@ -36,6 +36,10 @@ echo "::endgroup::"
 
 echo "::group::lock generator suite"
 python3 .github/scripts/test_lock_requirements.py
+echo "::endgroup::"
+
+echo "::group::session-start hook suite"
+python3 .github/scripts/test_session_start_tessl_update.py
 echo "::endgroup::"
 
 echo "::group::tracker storage-bootstrap suite"

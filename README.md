@@ -1,14 +1,29 @@
-# jbaruch/frequent-flyer-advocate
+# jbaruch/ffa-acr-dogfood
 
-[![tessl](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2Fjbaruch%2Ffrequent-flyer-advocate)](https://tessl.io/registry/jbaruch/frequent-flyer-advocate)
+[![Tessl score of the upstream package jbaruch/frequent-flyer-advocate](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2Fjbaruch%2Ffrequent-flyer-advocate)](https://tessl.io/registry/jbaruch/frequent-flyer-advocate)
+
+The badge is the upstream Tessl package's score, not this copy's. This ACR copy is not published to Tessl and has no score of its own.
 
 Write professional, persuasive complaint letters to US airlines on behalf of passengers — grounded in the airline's own published policies, federal DOT regulations, and the passenger's loyalty status, not generic grievances.
 
 ## Installation
 
+This is the ACR dogfood copy of [upstream frequent-flyer-advocate](https://github.com/jbaruch/frequent-flyer-advocate).
+
+Version 0.9.39 is being prepared. Before publishing or installing it, release and install the corrected [ACR CLI](https://github.com/jbaruch/agentic-context-registry) with `source.tesslIdentity` support. ACR 0.1.3 and earlier reject that field. The candidate CLI is not release-approved.
+
+Once that CLI and this package's v0.9.39 release are available, run these commands from your project directory. Select the agents you use in `acr init`:
+
+```shell
+acr init --agent claude-code --agent codex --agent cursor --non-interactive
+acr install github:jbaruch/ffa-acr-dogfood@v0.9.39 --non-interactive
+acr realize
+acr check
 ```
-tessl install jbaruch/frequent-flyer-advocate
-```
+
+Tessl is optional. The SessionStart hook skips its update with a notice when Tessl is absent. When present, it runs `tessl update --yes` in the project directory. Every outcome worth relaying — the skip, a failure, and a successful update that printed something — reaches the agent as a session-start context payload beginning `Session-start status — `, as well as the terminal. A failed update carries its own exit status, whatever it wrote on stdout and on stderr — each named — and the recovery step inside that payload, and never reads as a successful one. The hook itself exits 0 once the payload is written; a non-zero exit means the payload could not be written.
+
+This copy is not published to Tessl. Repository Actions, including the inherited Tessl publication workflow, are disabled. Manual ACR publication does not require the inherited workflow secrets listed in `.env.example`.
 
 ## What's Included
 
